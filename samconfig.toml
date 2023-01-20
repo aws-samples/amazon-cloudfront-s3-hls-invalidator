@@ -1,0 +1,12 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "LiveVideoOrigination"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-12w6epzqunihl"
+s3_prefix = "LiveVideoOrigination"
+region = "ap-southeast-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "LiveVideoOriginBucketName=\"livevideoorigination-001\""
+image_repositories = []

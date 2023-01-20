@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: |
+  This SAM template will deploy the following resources:
+   - S3 bucket as the Live Origin. Your encoder should upload files to this location.
+   - A CloudFront distribution that will act as the delivery hostname for the live stream.
+     Your player should load this hostname as the playback URL.
+   - A Lambda function that will parse m3u8 playlists and check if they are stale.
+     Stale means that the m3u8 playlist has not been updated in a configurable multiple of the TARGET_DURATION.
+     For example, a TARGET_DURATION of 4 with a TARGET_DURATION_MULTIPLE of 1.5 would require the encoder upload within 6 seconds
+     M3u8 playlists containing and ENDLIST or considered primary playlists will not be deleted
+
+
+
+Transform: "AWS::Serverless-2016-10-31"
+
+Parameters:
+  LiveVideoOriginBucketName:
+    Type: String
+    Default: live-video-origin
+    Description: Name of the S3 Bucket created for video origin (i.e. where your encoder will upload to)
+
+Resources:
+  M3u8Layer:
+    Type: "AWS::Serverless::LayerVersion"
+    Properties:
+      CompatibleRuntimes:
+        - python3.9
+      ContentUri: m3u8Parse/
+      Description: "https://github.com/globocom/m3u8"
+      LayerName: m3u8Parse
+      LicenseInfo: licensed under the MIT License
+      RetentionPolicy: Retain
+
+  CloudFrontOriginAccessIdentity:
+    Type: "AWS::CloudFront::OriginAccessControl"
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${LiveVideoOriginBucketName}-access-identity
+        Description: Access Identity for S3 Bucket
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  LiveVideoOriginBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Ref LiveVideoOriginBucketName
+
+  CloudFrontDistribution:
+    Type: "AWS::CloudFront::Distribution"
+    Properties:
+      DistributionConfig:
+        DefaultCacheBehavior:
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6"
+          OriginRequestPolicyId: "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf"
+          ResponseHeadersPolicyId: "5cc3b908-e619-4b99-88e5-2cf7f45965bd"
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: allow-all
+        Enabled: true
+        Origins:
+          - DomainName: !Sub "${LiveVideoOriginBucket}.s3-${AWS::Region}.amazonaws.com"
+            Id: S3Origin
+            OriginAccessControlId: !Ref CloudFrontOriginAccessIdentity
+            S3OriginConfig:
+              {}
+
+  DetectStaleM3u8Function:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      Architectures:
+        - arm64
+      CodeUri: detect_stale_m3u8/
+      Environment:
+        Variables:
+          TARGET_DURATION_MULTIPLE: 1.5 #modify this to adjust stale threshold 
+      Events:
+        m3u8UploadEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref LiveVideoOriginBucket
+            Events: "s3:ObjectCreated:*"
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .m3u8
+      Handler: app.lambda_handler
+      Layers:
+        - Ref: M3u8Layer
+      MemorySize: 128
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref LiveVideoOriginBucketName
+      Runtime: python3.9
+      Timeout: 30
+
+  LiveVideoOriginBucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref LiveVideoOriginBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontDistributionRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action:
+              - "s3:GetObject"
+              - "s3:ListBucket"
+            Resource:
+              - "Fn::Sub": "arn:aws:s3:::${LiveVideoOriginBucket}"
+              - "Fn::Sub": "arn:aws:s3:::${LiveVideoOriginBucket}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+Outputs:
+  LiveVideoCloudFrontHostname:
+    Description: Delivery hostname of CloudFront distribution
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  LiveVideoOriginBucket:
+    Description: S3 upload hostname
+    Value: !GetAtt LiveVideoOriginBucket.RegionalDomainName
