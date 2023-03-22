@@ -1,6 +1,6 @@
 # S3 for Live Video Streaming - Stale Manifest Invalidation
 
-<em> Details will be published in a future AWS Media blog post </em>
+<em> Background is available at this AWS Media blog [Live Video streaming using Amazon S3](https://aws.amazon.com/blogs/media/live-video-streaming-using-amazon-s3/) </em>
 
 ## Purpose
 
